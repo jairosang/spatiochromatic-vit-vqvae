@@ -1,0 +1,75 @@
+@startgantt
+
+title Project Timeline
+projectscale weekly
+Label on first column
+Project starts 2026-11-09
+
+<style>
+ganttDiagram {
+  note {
+    BackgroundColor transparent
+    LineColor transparent
+    FontSize 11
+  }
+}
+</style>
+
+2026-12-07 to 2027-01-10 are closed
+
+-- Implementation & Experiments --
+[Duration: 6 weeks] as [Setup] requires 6 weeks
+note bottom
+  Setup & ViT-VQ-VAE Baseline
+end note
+
+[Duration: 4 weeks] as [Core] requires 4 weeks
+note bottom
+  Core Experiments
+end note
+[Core] starts at [Setup]'s end
+
+[Duration: 3 weeks] as [Analysis] requires 3 weeks
+note bottom
+  Evaluation & Analysis
+end note
+[Analysis] starts at [Core]'s end
+
+[Duration: 1 week] as [Cleanup] requires 1 week
+note bottom
+  Code Cleanup & Reproducibility
+end note
+[Cleanup] starts at [Analysis]'s end
+
+-- Thesis Writing & Review --
+[Duration: 3 weeks ] as [Lit] requires 3 weeks
+note bottom
+  Literature Review & Related Work
+end note
+
+[Duration: 3 weeks  ] as [Methods] requires 3 weeks
+note bottom
+  Methodology & Architecture Writeup
+end note
+[Methods] starts at [Lit]'s end
+
+[Duration: 3 weeks   ] as [Results] requires 3 weeks
+note bottom
+  Results & Discussion Writeup
+end note
+[Results] starts at [Core]'s end
+
+[Duration: 1 week ] as [Final] requires 1 week
+note bottom
+  Final Revision & Buffer
+end note
+[Final] starts at [Results]'s end
+[Final] starts at [Analysis]'s end
+
+-- Milestones --
+[Submission: 2027-03-24] as [Deadline] happens at 2027-03-24
+note bottom
+  Submission Deadline
+end note
+
+@endgantt
