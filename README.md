@@ -1,18 +1,59 @@
 # Spatiochromatic Representation in Transformer-Based Discrete Autoencoders
 
-## 1. Objectives
+BSc (Hons) Computer Science final-year project, Lancaster University.
+**Author:** Jairo San Miguel Sang · **Supervisor:** Dr. Arash Akbarinia
 
-### Research Questions
-1. **Global vs. Local Attention:** Standard convolutional discrete autoencoders (VQ-VAEs) (van den Oord, Vinyals and Kavukcuoglu, 2017) are only able to process small, local patches of an image at a time. On the other hand, Vision Transformers (ViTs) (Dosovitskiy et al., 2021) work in a way where every image patch can immediately grasp the entire scene. Therefore, if we swap the convolutional encoder and decoder for Vision Transformers, do human-like basic colour categories still emerge naturally (de Vries et al., 2022; Akbarinia, 2024)?
-2. **Spatial vs. Chromatic Tradeoff:** As shown by previous CNN experiments, shrinking the spatial grid negatively affects downstream recognition much faster than shrinking the colour palette (Akbarinia et al., 2020). Does a Transformer's global approach shift this trade-off? Would this let us reach better downstream recognition accuracy at higher compression ratios (Dosovitskiy et al., 2021; Yu et al., 2022)?
-3. **Spatiochromatic Mixup in Bigger Codebooks:** In CNN VQ-VAEs, increasing the codebook size causes some vectors to learn spatial patterns and edges instead of individual colours. Taking this into account, does a ViT keep colour and spatial patterns cleaner and more separated, and do its learned colour palettes stay consistent across colour spaces (RGB, CIELAB, DKL) (Akbarinia et al., 2020; Akbarinia and Gil-Rodríguez, 2021)?
+This project investigates what happens when the convolutional encoder and decoder of a Vector-Quantised Variational Autoencoder (VQ-VAE) are replaced with Vision Transformers. Convolutional VQ-VAEs trained on natural images are known to learn small colour palettes that resemble human basic colour categories. Because a Transformer can attend to the whole scene at once rather than to small local neighbourhoods, it may change how colour and spatial information are traded off in the discrete code. We compare a ViT-based discrete autoencoder against an established CNN baseline under matched compression.
 
-### Target & Features
-- **Scientific Targets:**
-  - Directly compare a ViT-based discrete autoencoder (Yu et al., 2022) against the established CNN VQ-VAE baseline (van den Oord, Vinyals and Kavukcuoglu, 2017; Akbarinia et al., 2020) across matched compression ratios.
-  - Analyse the resulting colour palettes across training to see how closely they match human colour categories, as well as how they compare against each other, when trained for **image reconstruction** versus **object classification** (de Vries et al., 2022; Akbarinia, 2024).
-- **System & Software Targets:**
-  - Create a clean, modular PyTorch codebase where CNN and ViT encoders/decoders can be easily exchanged while keeping the same shared bottlenecks as well as evaluation tools.
-  - Set up config files for reproducible experiments, automatic checkpoint saving, and scripts to generate graphs and 3D colour-space scatter plots.
-- **Stretch Goals:**
-  - Depending on how fast the baseline experiments run and what we find, the setup could allow us to explore different biologically inspired questions that could be of interest, such as: **adaptive token merging** (Bolya et al., 2023) (teaching the model to combine similar pieces of an image to process information faster without losing important details), **colour constancy under lighting shifts** (Akbarinia and Parraga, 2018) (testing if the model recognizes true object colors despite lighting changes), **masked patch prediction** (He et al., 2022) (training the model to fill in missing parts of images from context), or **dense downstream tasks** like object detection and segmentation.
+## Research questions
+
+1. **Global vs. local attention:** do human-like colour categories still emerge when the CNN is swapped for a ViT?
+2. **Spatial vs. chromatic trade-off:** does global attention shift the balance between spatial resolution and palette size, and so improve downstream recognition at high compression?
+3. **Spatiochromatic mixup:** with larger codebooks, does a ViT keep colour and spatial patterns more cleanly separated than a CNN, and are its palettes consistent across colour spaces (RGB, YCbCr)?
+
+The full motivation, related work, methodology and bibliography are in [`papers/proposal.md`](papers/proposal.md).
+
+## Approach
+
+```
+image → ViT encoder → discrete codebook (K codes) → ViT decoder → reconstruction
+                                  └─ optional classification head
+```
+
+Experiments vary the factors that determine the compression ratio and what the model is encouraged to learn:
+
+- **Spatial grid:** patch size, which sets the resolution of the latent grid.
+- **Palette size:** number of codebook entries, kept small (roughly 6–32) so individual codes can be inspected as colours.
+- **Colour space:** the space of the input and of the reconstruction target.
+- **Training objective:** reconstruction only, or reconstruction jointly with object classification.
+
+The resulting codebooks are analysed against human colour categories and compared with the CNN baseline.
+
+## Repository layout
+
+| Path | Contents |
+|------|----------|
+| `src/` | Model, quantiser, colour-space and data-loading code |
+| `papers/` | Project proposal and thesis write-up |
+| `prototyping/` | Exploratory notebooks |
+| `data/` | Local datasets (git-ignored) |
+
+## Getting started
+
+```bash
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+Datasets are expected under `data/`. Imagenette is used for quick local prototyping; full experiments run on ImageNet.
+
+## Key references
+
+- van den Oord, Vinyals and Kavukcuoglu (2017). *Neural Discrete Representation Learning.* (VQ-VAE)
+- Dosovitskiy et al. (2021). *An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale.* [arXiv:2010.11929](https://arxiv.org/abs/2010.11929)
+- Yu et al. (2022). *Vector-quantized Image Modeling with Improved VQGAN.* (ViT-VQGAN)
+- Akbarinia, Gil-Rodríguez, Flachot and Toscani (2020). *The Utility of Decorrelating Colour Spaces in Vector Quantised Variational Autoencoders.* [arXiv:2009.14487](https://arxiv.org/abs/2009.14487) (CNN baseline)
+- de Vries, Akbarinia, Flachot and Gegenfurtner (2022). *Emergent color categorization in a neural network trained for object recognition.* [eLife 11:e76472](https://doi.org/10.7554/eLife.76472)
+
+See the proposal for the complete bibliography.
