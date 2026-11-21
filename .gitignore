@@ -1,1 +1,8 @@
 out
+venv
+
+
+data/*
+!data/.gitkeep
+
+__pycache__
