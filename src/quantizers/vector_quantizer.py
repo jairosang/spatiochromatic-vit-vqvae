@@ -15,7 +15,7 @@ import torch.nn.functional as F
 
 
 class VectorQuantizer(nn.Module):
-    def __init__(self, num_codes: int, code_dim: int, commitment_beta: float = 0.25, l2_normalize: bool = False,):
+    def __init__(self, num_codes: int, code_dim: int, commitment_beta: float = 0.25, l2_normalize: bool = False, dead_code_threshold: float = 1.0, usage_decay: float = 0.99):
         """
         Args:
             num_codes: K, the number of codebook vectors (e.g. 6, 8, 11, 16, 32).
@@ -23,15 +23,40 @@ class VectorQuantizer(nn.Module):
             commitment_beta: weight of the commitment loss (0.25 in the VQ-VAE paper).
             l2_normalize: if True, compare vectors by cosine similarity instead of
                 Euclidean distance (Yu et al., 2022). This helps prevent dead codes.
+            dead_code_threshold: during training, a code whose running-average use
+                falls below this many tokens per batch is reset to a random encoder
+                output from the current batch (as in Jukebox, Dhariwal et al., 2020).
+                0 turns restarts off.
+            usage_decay: decay of the running average of code use.
         """
         super().__init__()
         self.num_codes = num_codes
         self.code_dim = code_dim
         self.commitment_beta = commitment_beta
         self.l2_normalize = l2_normalize
+        self.dead_code_threshold = dead_code_threshold
+        self.usage_decay = usage_decay
 
         self.codebook = nn.Embedding(num_codes, code_dim)
-        self.codebook.weight.data.uniform_(-1.0 / num_codes, 1.0 / num_codes)
+        # Same init as the CNN baseline (DecomposeNet): N(0, 0.02) for every K,
+        # so the starting scale does not shrink as the codebook grows.
+        nn.init.normal_(self.codebook.weight, mean=0.0, std=0.02)
+
+        # Running average of how many tokens pick each code per batch. Starts at 0,
+        # so with restarts on, the first training step fills the codebook from data.
+        self.register_buffer("usage", torch.zeros(num_codes))
+
+    @torch.no_grad()
+    def restart_dead_codes(self, flat_z: torch.Tensor) -> None:
+        """Move unused codes onto randomly chosen encoder outputs (flat_z: (M, D))."""
+        dead = (self.usage < self.dead_code_threshold).nonzero().squeeze(1)
+        if dead.numel() == 0:
+            return
+        samples = flat_z[torch.randint(len(flat_z), (dead.numel(),), device=flat_z.device)]
+        self.codebook.weight[dead] = samples
+        # Give restarted codes a fresh start: they stay alive as long as they are
+        # used about `dead_code_threshold` times per batch from now on.
+        self.usage[dead] = self.dead_code_threshold
 
     def get_codebook(self) -> torch.Tensor:
         """The (K, D) codebook, normalised if l2_normalize is on."""
@@ -58,11 +83,16 @@ class VectorQuantizer(nn.Module):
         """
         if self.l2_normalize:
             z = F.normalize(z, dim=-1)
+        flat_z = z.reshape(-1, self.code_dim)  # (B*N, D)
+
+        # 0. Restart dead codes. Done before the codebook is used in this pass, so
+        #    the in-place update cannot interfere with this step's gradients.
+        if self.training and self.dead_code_threshold > 0:
+            self.restart_dead_codes(flat_z.detach())
         codebook = self.get_codebook()
 
         # 1. Find the nearest codebook vector for every token.
         #    ||z - e||^2 = ||z||^2 - 2 z.e + ||e||^2
-        flat_z = z.reshape(-1, self.code_dim)  # (B*N, D)
         distances = (
             flat_z.pow(2).sum(dim=1, keepdim=True)
             - 2 * flat_z @ codebook.t()
@@ -84,7 +114,10 @@ class VectorQuantizer(nn.Module):
 
         # 4. Codebook usage statistics (used to spot dead codes).
         with torch.no_grad():
-            code_probs = F.one_hot(indices, self.num_codes).float().mean(dim=0)
+            counts = torch.bincount(indices, minlength=self.num_codes).float()
+            if self.training:
+                self.usage.mul_(self.usage_decay).add_(counts, alpha=1 - self.usage_decay)
+            code_probs = counts / counts.sum()
             perplexity = torch.exp(-(code_probs * torch.log(code_probs + 1e-10)).sum())
             active_codes = (code_probs > 0).float().mean()
 
