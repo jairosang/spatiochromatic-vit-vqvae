@@ -75,7 +75,8 @@ def unpatchify(patches: torch.Tensor, patch_size: int, grid_size: int) -> torch.
 class ViTEncoder(nn.Module):
     """Image -> one latent vector per patch, shape (B, num_patches, code_dim)."""
 
-    def __init__(self, image_size: int, patch_size: int, in_channels: int, embed_dim: int, depth: int, num_heads: int, mlp_ratio: float, code_dim: int):
+    def __init__(self, image_size: int, patch_size: int, in_channels: int, embed_dim: int, depth: int, num_heads: int, mlp_ratio: float, code_dim: int, output_scale: float = 1.0):
+        """output_scale: initial RMS of the latents; set it to the codebook's scale."""
         super().__init__()
         self.patch_size = patch_size
         num_patches = (image_size // patch_size) ** 2
@@ -92,6 +93,12 @@ class ViTEncoder(nn.Module):
         self.norm = nn.LayerNorm(embed_dim)
         # Project down to the (usually smaller) codebook dimension.
         self.to_code_dim = nn.Linear(embed_dim, code_dim)
+        # Keep the latents at the codebook's scale. Without this, the encoder output
+        # grows freely during training while the codebook (moved by only ~lr per step)
+        # cannot follow, so the VQ loss keeps rising. Same role as the final
+        # BatchNorm (weight = 1/40) at the end of the CNN baseline's encoder.
+        self.code_norm = nn.LayerNorm(code_dim)
+        nn.init.constant_(self.code_norm.weight, output_scale)
 
     def forward(self, images: torch.Tensor) -> torch.Tensor:
         x = patchify(images, self.patch_size)        # (B, N, P*P*C)
@@ -100,7 +107,7 @@ class ViTEncoder(nn.Module):
         for block in self.blocks:                    # every patch attends to every patch
             x = block(x)
         x = self.norm(x)
-        return self.to_code_dim(x)                   # (B, N, code_dim)
+        return self.code_norm(self.to_code_dim(x))   # (B, N, code_dim)
 
 
 class ViTDecoder(nn.Module):
@@ -138,7 +145,7 @@ class ViTDecoder(nn.Module):
 # ---------------------------------------------------------------------------
 
 class ViTVQVAE(nn.Module):
-    def __init__(self, image_size: int = 224, patch_size: int = 16, in_channels: int = 3, embed_dim: int = 256, encoder_depth: int = 4, decoder_depth: int = 4, num_heads: int = 4, mlp_ratio: float = 4.0, num_codes: int = 8, code_dim: int = 64, commitment_beta: float = 0.25, l2_normalize_codes: bool = False, num_classes: int | None = None):
+    def __init__(self, image_size: int = 224, patch_size: int = 16, in_channels: int = 3, embed_dim: int = 256, encoder_depth: int = 4, decoder_depth: int = 4, num_heads: int = 4, mlp_ratio: float = 4.0, num_codes: int = 8, code_dim: int = 64, commitment_beta: float = 0.25, l2_normalize_codes: bool = False, dead_code_threshold: float = 1.0, num_classes: int | None = None):
         """
         Args:
             image_size: input height and width (images must be square).
@@ -149,6 +156,8 @@ class ViTVQVAE(nn.Module):
             code_dim: D, the size of each codebook vector.
             commitment_beta: VQ commitment loss weight.
             l2_normalize_codes: cosine-similarity codebook lookup (Yu et al., 2022).
+            dead_code_threshold: restart codes used less than this many times per
+                batch (running average); 0 turns restarts off.
             num_classes: if set, add a classification head on the quantised
                 tokens for the joint reconstruction + recognition regime.
         """
@@ -161,12 +170,15 @@ class ViTVQVAE(nn.Module):
         self.grid_size = image_size // patch_size
         self.num_codes = num_codes
 
+        self.quantizer = VectorQuantizer(
+            num_codes, code_dim, commitment_beta, l2_normalize_codes, dead_code_threshold
+        )
+        # Start the encoder output at the same scale as the codebook entries.
+        codebook_scale = self.quantizer.codebook.weight.detach().std().item()
         self.encoder = ViTEncoder(
             image_size, patch_size, in_channels,
             embed_dim, encoder_depth, num_heads, mlp_ratio, code_dim,
-        )
-        self.quantizer = VectorQuantizer(
-            num_codes, code_dim, commitment_beta, l2_normalize_codes
+            output_scale=codebook_scale,
         )
         self.decoder = ViTDecoder(
             image_size, patch_size, in_channels,
